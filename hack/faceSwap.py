@@ -5,6 +5,8 @@ import numpy as np
 import cv2
 import dlib
 
+
+channel1 = None
 PREDICTOR_PATH = "/home/hackuser/Downloads/shape_predictor_68_face_landmarks.dat"
 # Read points from text file
 def readPoints(path) :
@@ -56,9 +58,7 @@ def calculateDelaunayTriangles(rect, points):
         subdiv.insert(p) 
     
     triangleList = subdiv.getTriangleList();
-    
     delaunayTri = []
-    
     pt = []    
         
     for t in triangleList:        
@@ -130,104 +130,164 @@ def get_landmarks(im):
     predictor = dlib.shape_predictor(PREDICTOR_PATH)
     rects = detector(im, 1)
 
-    rects[0].l=0;
-    rects[0].t=0;
-    rects[0].rl=len(im[0]);
-    rects[0].b=len(im);
+    # rects[0].l=0;
+    # rects[0].t=0;
+    # rects[0].r=len(im[0]);
+    # rects[0].b=len(im);
 
 
     return [(int(p.x), int(p.y)) for p in predictor(im, rects[0]).parts()]
-    
 
-if __name__ == '__main__' :
+import json
+from collections import namedtuple
+def _json_object_hook(d): return namedtuple('X', d.keys())(*d.values())
+def json2obj(data): return json.loads(data, object_hook=_json_object_hook)
 
-
-
-
-
-
+import pika;
 
 
 
+def callback(ch, method, channel, body):
+    import base64
+    bytes = base64.b64decode(json2obj(body).ScenePhoto)
+    with open("panorama.jpg", 'wb') as f:
+        f.write(bytes)
+
+    bytes = base64.b64decode(json2obj(body).UserPhoto)
+    with open("face.jpg", 'wb') as f:
+        f.write(bytes)
+    perform(channel)
+    print('ok!')
 
 
+class a:
+    ScenePhoto = []
+    UserPhoto = []
+    Roi = []
 
+
+def perform(channel):
     #############################
 
-
-
-    
     # Make sure OpenCV is version 3.0 or above
     (major_ver, minor_ver, subminor_ver) = (cv2.__version__).split('.')
 
-    if int(major_ver) < 3 :
-        print >>sys.stderr, 'ERROR: Script needs OpenCV 3.0 or higher'
+    if int(major_ver) < 3:
+        print >> sys.stderr, 'ERROR: Script needs OpenCV 3.0 or higher'
         sys.exit(1)
 
     # Read images
-    filename1 = 'ted_cruz.jpg'
-    filename2 = 'donald_trump.jpg'
+    filename1 = 'panorama.jpg'
+    filename2 = 'face.jpg'
 
     img1 = cv2.imread(filename1);
     img2 = cv2.imread(filename2);
-    img1Warped = np.copy(img2);    
-    
+    img1Warped = np.copy(img2);
+
     # Read array of corresponding points
-    points1 =  get_landmarks(cv2.imread(filename1, cv2.IMREAD_COLOR));  #readPoints(filename1 + '.txt')
-    points2 =  get_landmarks(cv2.imread(filename2, cv2.IMREAD_COLOR));  #readPoints(filename2 + '.txt')
-    
+    points1 = get_landmarks(cv2.imread(filename1, cv2.IMREAD_COLOR));  # readPoints(filename1 + '.txt')
+    points2 = get_landmarks(cv2.imread(filename2, cv2.IMREAD_COLOR));  # readPoints(filename2 + '.txt')
+
     # Find convex hull
     hull1 = []
     hull2 = []
 
-    hullIndex = cv2.convexHull(np.array(points2), returnPoints = False)
-          
+    hullIndex = cv2.convexHull(np.array(points2), returnPoints=False)
+
     for i in xrange(0, len(hullIndex)):
         hull1.append(points1[int(hullIndex[i])])
         hull2.append(points2[int(hullIndex[i])])
-    
-    
+
     # Find delanauy traingulation for convex hull points
-    sizeImg2 = img2.shape    
+    sizeImg2 = img2.shape
     rect = (0, 0, sizeImg2[1], sizeImg2[0])
-     
+
     dt = calculateDelaunayTriangles(rect, hull2)
-    
+
     if len(dt) == 0:
         quit()
-    
+
     # Apply affine transformation to Delaunay triangles
     for i in xrange(0, len(dt)):
         t1 = []
         t2 = []
-        
-        #get points for img1, img2 corresponding to the triangles
+
+        # get points for img1, img2 corresponding to the triangles
         for j in xrange(0, 3):
             t1.append(hull1[dt[i][j]])
             t2.append(hull2[dt[i][j]])
-        
+
         warpTriangle(img1, img1Warped, t1, t2)
-    
-            
+
     # Calculate Mask
     hull8U = []
     for i in xrange(0, len(hull2)):
         hull8U.append((hull2[i][0], hull2[i][1]))
-    
-    mask = np.zeros(img2.shape, dtype = img2.dtype)  
-    
+
+    mask = np.zeros(img2.shape, dtype=img2.dtype)
+
     cv2.fillConvexPoly(mask, np.int32(hull8U), (255, 255, 255))
-    
-    r = cv2.boundingRect(np.float32([hull2]))    
-    
-    center = ((r[0]+int(r[2]/2), r[1]+int(r[3]/2)))
-        
-    
+
+    r = cv2.boundingRect(np.float32([hull2]))
+
+    center = ((r[0] + int(r[2] / 2), r[1] + int(r[3] / 2)))
+
     # Clone seamlessly.
     output = cv2.seamlessClone(np.uint8(img1Warped), img2, mask, center, cv2.NORMAL_CLONE)
-    
+
     cv2.imshow("Face Swapped", output)
-    cv2.waitKey(0)
-    
-    cv2.destroyAllWindows()
+    cv2.imwrite("FromPython.jpg", output)
+    with open("FromPython.jpg", "rb") as binary_file:
+        # Read the whole file at once
+        data = binary_file.read()
+
+    obja = a()
+    import base64
+    obja.b = base64.b64encode(data)
+    obja.name = 'good'
+    import json
+    from json import JSONEncoder
+
+    class MyEncoder(JSONEncoder):
+        def default(self, o):
+            return o.__dict__
+
+    dto = MyEncoder().encode(obja)
+    channel1.basic_publish(exchange='',
+                          routing_key='FromPython',
+                          body= dto)
+
+
+
+
+
+    # cv2.waitKey(0)
+
+    # cv2.destroyAllWindows()
+
+
+def workWithPhotosContinious():
+    credentials = pika.PlainCredentials('guest', 'guest');
+    parameters = pika.ConnectionParameters('13.92.128.194', 5672, '/', credentials)
+    connection = pika.BlockingConnection(parameters)
+    channel = connection.channel()
+    global channel1
+    channel1=channel
+    channel.queue_declare(queue='ToPython')
+    channel.queue_declare(queue='FromPython')
+    data =[]
+
+    channel.basic_consume(callback,
+                          queue='ToPython',
+                          no_ack=True)
+
+    print(' [*] Waiting for messages. To exit press CTRL+C')
+    channel.start_consuming()
+    while(True):
+        print('work')
+
+
+workWithPhotosContinious()
+
+
         
